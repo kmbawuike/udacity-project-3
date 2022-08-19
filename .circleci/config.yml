@@ -13,24 +13,22 @@ commands:
             aws s3 rm s3://udapeople-${CIRCLE_WORKFLOW_ID:0:7} --recursive
             aws cloudformation delete-stack --stack-name udapeople-frontend-${CIRCLE_WORKFLOW_ID:0:7}
 
-  # revert-migrations:
-  #   description: Revert the last migration if successfully run in the current workflow.
-  #   parameters:
-  #     # Add parameter here
-  #   steps:
-  #     - run:
-  #         name: Revert migrations
-  #         # Add when this will run
-  #         command: |
-  #           # Curl command here to see if there was a successful migration associated with the workflow id, store result in SUCCESS variable
-  #           SUCCESS = 1
-  #           if(( $SUCCESS==1 ));
-  #           then
-  #           #  cd ~/project/backend
-  #           #  npm install
-  #           #  Add revert code here. You can find this in the Getting Started section.
-  #             exit 1
-  #           fi
+  revert-migrations:
+    description: Revert the last migration if successfully run in the current workflow.
+    steps:
+      - run:
+          name: Revert migrations
+          when: on_fail
+          command: |
+            # Curl command here to see if there was a successful migration associated with the workflow id, store result in SUCCESS variable
+            SUCCESS=$(curl --insecure https://kvdb.io/198jNZtFQeLMSWK9vx3Czuaa/migration_${CIRCLE_WORKFLOW_ID:0:7})
+            echo $SUCCESS
+            if [[ "$SUCCESS" == "1" ]]
+            then
+              pwd
+              ls -la
+              npm run migrations:revert
+            fi
 
 jobs:
   build-frontend:
@@ -162,7 +160,7 @@ jobs:
     steps:
       - checkout
       - add_ssh_keys:
-          fingerprints: ["e5:09:9e:32:c4:59:03:ec:de:42:33:76:ab:36:73:3d"] 
+          fingerprints: ["e5:09:9e:32:c4:59:03:ec:de:42:33:76:ab:36:73:3d"]
       - attach_workspace:
           at: .circleci/ansible/
       - run:
@@ -175,35 +173,35 @@ jobs:
             unzip awscli-bundle.zip
             ./awscli-bundle/install -i /usr/local/aws -b /usr/local/bin/aws
       - run:
-          name: Configure server 
+          name: Configure server
           command: |
             cd .circleci/ansible
-            ansible-playbook -i inventory.txt configure-server.yml 
-      - destroy-environment    
+            ansible-playbook -i inventory.txt configure-server.yml
+      - destroy-environment
 
   run-migrations:
     docker:
       - image: cimg/node:18.4.0
     steps:
       - checkout
-      - run: 
+      - run:
           name: Install curl
           command: |
             sudo apt-get install curl -y
-      - run: 
+      - run:
           name: Install awscli
           command: |
             sudo apt-get update && sudo apt-get install -yy less
             curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
             unzip awscliv2.zip
             sudo ./aws/install
-      - run: 
+      - run:
           name: Run migrations
           command: |
             cd backend
             npm install 
             npm run migrations > migrations_dump.txt
-      - run: 
+      - run:
           name: Send migration results to kvdb.io
           command: |
             if grep -q "has been executed successfully." ~/project/backend/migrations_dump.txt
@@ -211,84 +209,86 @@ jobs:
               curl https://kvdb.io/9CJBAxBnpWuBu3GnwWrW6M/migration_${CIRCLE_WORKFLOW_ID:0:7}  -d '1'
             fi
       - destroy-environment
+      - revert-migrations
 
   deploy-frontend:
-      docker:
-        - image: circleci/node:13.8.0
-      steps:
-        - checkout
-        - attach_workspace:
-            at: .circleci/ansible/
-        - run: 
-            name: Install dependencies
-            command: |
-              sudo apt-get update && sudo apt-get install python -y
-              sudo apt-get -qq install awscli
-        - run: 
-            name: Get backend url
-            command: |
-              export BACKEND_IP=$( aws ec2 describe-instances --query 'Reservations[*].Instances[*].PublicIpAddress' --filters "Name=tag:Name, Values=backend-${CIRCLE_WORKFLOW_ID:0:7}" --output text)
-              export API_URL="http://${BACKEND_IP}:3030"
-              echo "API_URL = ${API_URL}"
-              echo API_URL="http://${BACKEND_IP}:3030" >> frontend/.env
-              cat frontend/.env
-        - run: 
-            name: baking backend ip
-            command: |
-              cd frontend
-              npm i
-              npm run build
-        - run: 
-            name: Deploy frontend objects
-            command: |
-                cd frontend
-                npm install
-                npm run build
-                aws s3 cp ./dist s3://udapeople-${CIRCLE_WORKFLOW_ID:0:7} --recursive
-        - destroy-environment
-        
+    docker:
+      - image: circleci/node:13.8.0
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .circleci/ansible/
+      - run:
+          name: Install dependencies
+          command: |
+            sudo apt-get update && sudo apt-get install python -y
+            sudo apt-get -qq install awscli
+      - run:
+          name: Get backend url
+          command: |
+            export BACKEND_IP=$( aws ec2 describe-instances --query 'Reservations[*].Instances[*].PublicIpAddress' --filters "Name=tag:Name, Values=backend-${CIRCLE_WORKFLOW_ID:0:7}" --output text)
+            export API_URL="http://${BACKEND_IP}:3030"
+            echo "API_URL = ${API_URL}"
+            echo API_URL="http://${BACKEND_IP}:3030" >> frontend/.env
+            cat frontend/.env
+      - run:
+          name: baking backend ip
+          command: |
+            cd frontend
+            npm i
+            npm run build
+      - run:
+          name: Deploy frontend objects
+          command: |
+            cd frontend
+            npm install
+            npm run build
+            aws s3 cp ./dist s3://udapeople-${CIRCLE_WORKFLOW_ID:0:7} --recursive
+      - destroy-environment
+
   deploy-backend:
-      docker:
-        - image: cimg/python:3.10.4
-      steps:
-        - checkout
-        
-        - add_ssh_keys:
-            fingerprints:
-              - "e5:09:9e:32:c4:59:03:ec:de:42:33:76:ab:36:73:3d"
-        
-        - attach_workspace:
-            at: .circleci/ansible/
-          
-        - run:
-            name: "Install dependencies"
-            command: |
-              sudo apt-get update
-              sudo apt-get install awscli
-              sudo apt install python3-pip
-              pip3 --version
-              sudo python3 -m pip install ansible
-              sudo apt install rsync -y
-        
-        - run: 
-            name: "Install Nodejs"
-            command: |
-              sudo apt-get update
-              curl -fsSL https://deb.nodesource.com/setup_13.x | sudo -E bash - 
-              sudo apt-get install -y nodejs
-              node --version
-              npm --version   
-        - run:
-            name: "Deploy backend"
-            command: |
-              cd backend
-              npm i
-              npm run build
-              cd ../.circleci/ansible
-              echo "Contents  of the inventory.txt file is -------"
-              cat inventory.txt
-              ansible-playbook -i inventory.txt deploy-backend.yml
-        - destroy-environment
+    docker:
+      - image: cimg/python:3.10.4
+    steps:
+      - checkout
+
+      - add_ssh_keys:
+          fingerprints:
+            - "e5:09:9e:32:c4:59:03:ec:de:42:33:76:ab:36:73:3d"
+
+      - attach_workspace:
+          at: .circleci/ansible/
+
+      - run:
+          name: "Install dependencies"
+          command: |
+            sudo apt-get update
+            sudo apt-get install awscli
+            sudo apt install python3-pip
+            pip3 --version
+            sudo python3 -m pip install ansible
+            sudo apt install rsync -y
+
+      - run:
+          name: "Install Nodejs"
+          command: |
+            sudo apt-get update
+            curl -fsSL https://deb.nodesource.com/setup_13.x | sudo -E bash - 
+            sudo apt-get install -y nodejs
+            node --version
+            npm --version
+      - run:
+          name: "Deploy backend"
+          command: |
+            cd backend
+            npm i
+            npm run build
+            cd ../.circleci/ansible
+            echo "Contents  of the inventory.txt file is -------"
+            cat inventory.txt
+            ansible-playbook -i inventory.txt deploy-backend.yml
+      - destroy-environment
+      - revert-migrations
 
   # smoke-test:
   #   docker:
