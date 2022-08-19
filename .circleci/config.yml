@@ -212,43 +212,84 @@ jobs:
             fi
       - destroy-environment
 
-  # deploy-frontend:
-  #   docker:
-  #     # Docker image here that supports AWS CLI
-  #   steps:
-  #     # Checkout code from git
-  #     - run:
-  #         name: Install dependencies
-  #         command: |
-  #           # your code here
-  #     - run:
-  #         name: Get backend url
-  #         command: |
-  #           # your code here
-  #           export API_URL="http://${BACKEND_IP}:3030"
-  #           echo "${API_URL}"
-  #     - run:
-  #         name: Deploy frontend objects
-  #         command: |
-  #           # your code here
-  #     # Here's where you will add some code to rollback on failure
-
-  # deploy-backend:
-  #   docker:
-  #     # Docker image here that supports Ansible
-  #   steps:
-  #     # Checkout code from git
-  #     # Add ssh keys with fingerprint
-  #     # attach workspace
-  #     - run:
-  #         name: Install dependencies
-  #         command: |
-  #           # your code here
-  #     - run:
-  #         name: Deploy backend
-  #         command: |
-  #           # your code here
-  #     # Here's where you will add some code to rollback on failure
+  deploy-frontend:
+      docker:
+        - image: circleci/node:13.8.0
+      steps:
+        - checkout
+        - attach_workspace:
+            at: .circleci/ansible/
+        - run: 
+            name: Install dependencies
+            command: |
+              sudo apt-get update && sudo apt-get install python -y
+              sudo apt-get -qq install awscli
+        - run: 
+            name: Get backend url
+            command: |
+              export BACKEND_IP=$( aws ec2 describe-instances --query 'Reservations[*].Instances[*].PublicIpAddress' --filters "Name=tag:Name, Values=backend-${CIRCLE_WORKFLOW_ID:0:7}" --output text)
+              export API_URL="http://${BACKEND_IP}:3030"
+              echo "API_URL = ${API_URL}"
+              echo API_URL="http://${BACKEND_IP}:3030" >> frontend/.env
+              cat frontend/.env
+        - run: 
+            name: baking backend ip
+            command: |
+              cd frontend
+              npm i
+              npm run build
+        - run: 
+            name: Deploy frontend objects
+            command: |
+                cd frontend
+                npm install
+                npm run build
+                aws s3 cp ./dist s3://udapeople-${CIRCLE_WORKFLOW_ID:0:7} --recursive
+        - destroy-environment
+        
+  deploy-backend:
+      docker:
+        - image: cimg/python:3.10.4
+      steps:
+        - checkout
+        
+        - add_ssh_keys:
+            fingerprints:
+              - "e5:09:9e:32:c4:59:03:ec:de:42:33:76:ab:36:73:3d"
+        
+        - attach_workspace:
+            at: .circleci/ansible/
+          
+        - run:
+            name: "Install dependencies"
+            command: |
+              sudo apt-get update
+              sudo apt-get install awscli
+              sudo apt install python3-pip
+              pip3 --version
+              sudo python3 -m pip install ansible
+              sudo apt install rsync -y
+        
+        - run: 
+            name: "Install Nodejs"
+            command: |
+              sudo apt-get update
+              curl -fsSL https://deb.nodesource.com/setup_13.x | sudo -E bash - 
+              sudo apt-get install -y nodejs
+              node --version
+              npm --version   
+        - run:
+            name: "Deploy backend"
+            command: |
+              cd backend
+              npm i
+              npm run build
+              cd ../.circleci/ansible
+              echo "Contents  of the inventory.txt file is -------"
+              cat inventory.txt
+              ansible-playbook -i inventory.txt deploy-backend.yml
+        - destroy-environment  
+        - revert-migrations
 
   # smoke-test:
   #   docker:
